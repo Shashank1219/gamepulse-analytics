@@ -1,0 +1,21 @@
+name: 'gamepulse'
+version: '1.0.0'
+config-version: 2
+
+profile: 'gamepulse'
+
+model-paths: ["models"]
+test-paths: ["tests"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  gamepulse:
+    staging:
+      +schema: gamepulse_dev
+      +materialized: view
+    intermediate:
+      +schema: gamepulse_dev
+      +materialized: view
+    marts:
+      +schema: gamepulse_dev
+      +materialized: table

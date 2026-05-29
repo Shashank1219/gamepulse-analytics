@@ -1,0 +1,14 @@
+.venv/
+.env
+airflow/.env
+.vscode/
+data/
+*.pyc
+__pycache__/
+.dbt/
+logs/
+airflow/logs/
+airflow/plugins/
+*.egg-info/
+.DS_Store
+graphify-out/

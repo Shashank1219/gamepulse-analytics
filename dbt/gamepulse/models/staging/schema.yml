@@ -1,0 +1,60 @@
+models:
+  - name: stg_game_events
+    description: >
+      Cleaned and typed view of raw.game_events. One row per event.
+      All timestamps cast to UTC. Filters out rows missing critical
+      identity fields.
+    columns:
+      - name: event_id
+        description: Unique event identifier. Deduplication key.
+        tests:
+          - not_null
+          - unique
+
+      - name: event_type
+        description: Type of event fired by the game client.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['session_start', 'level_complete', 'purchase_made',
+                       'powerup_used', 'ad_watched']
+
+      - name: user_id
+        description: Unique player identifier.
+        tests:
+          - not_null
+
+      - name: session_id
+        description: Groups all events within one play session.
+        tests:
+          - not_null
+
+      - name: event_timestamp
+        description: When the event fired on the client. UTC.
+        tests:
+          - not_null
+
+      - name: segment_id
+        description: Player segment assigned at install time.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['casual', 'mid-core', 'whale', 'churned']
+
+      - name: ab_test_group
+        description: Experiment group the player belongs to.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['control', 'treatment']
+
+      - name: platform
+        description: Platform the player is on.
+        tests:
+          - accepted_values:
+              values: ['iOS', 'Android', 'web']
+
+      - name: country_code
+        description: ISO 3166-1 alpha-2 country code.
+        tests:
+          - not_null

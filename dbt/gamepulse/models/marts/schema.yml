@@ -1,0 +1,87 @@
+models:
+  - name: fct_daily_active_users
+    description: >
+      Daily active users by date and country. Primary metric table
+      for the operations dashboard.
+    columns:
+      - name: date
+        description: The date of activity.
+        tests:
+          - not_null
+      - name: country_code
+        description: ISO country code.
+        tests:
+          - not_null
+      - name: dau
+        description: Count of distinct active users on this date.
+        tests:
+          - not_null
+
+  - name: fct_retention
+    description: >
+      Day 0, 1, 7, 14, and 30 retention rates by weekly cohort.
+    columns:
+      - name: cohort_week
+        description: The week the cohort first installed.
+        tests:
+          - not_null
+      - name: days_since_install
+        description: Retention day measured (0, 1, 7, 14, 30).
+        tests:
+          - not_null
+          - accepted_values:
+              values: [0, 1, 7, 14, 30]
+      - name: retention_rate_pct
+        description: Percentage of cohort retained on this day.
+        tests:
+          - not_null
+
+  - name: fct_revenue
+    description: >
+      Daily revenue metrics including ARPU, ARPPU, paying users
+      and new payers.
+    columns:
+      - name: date
+        description: Revenue date.
+        tests:
+          - not_null
+      - name: total_revenue_usd
+        description: Total real-money revenue in USD.
+        tests:
+          - not_null
+
+  - name: fct_funnel
+    description: >
+      Level progression funnel showing completion rates,
+      average attempts, and booster purchase rates per level.
+    columns:
+      - name: level_number
+        description: Numeric level position in the game.
+        tests:
+          - not_null
+          - unique
+
+  - name: fct_ab_test_results
+    description: >
+      A/B test results by variant. Includes conversion rate,
+      average revenue per user, and leakage user count.
+      Leakage users are excluded from conversion calculations.
+    columns:
+      - name: ab_test_group
+        description: Experiment variant.
+        tests:
+          - not_null
+          - unique
+          - accepted_values:
+              values: ['control', 'treatment']
+
+  - name: dim_users
+    description: >
+      One row per user. Player profile including install date,
+      acquisition source, segment, lifetime spend and payer status.
+    columns:
+      - name: user_id
+        description: Unique player identifier.
+        tests:
+          - not_null
+          - unique

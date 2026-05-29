@@ -1,0 +1,49 @@
+models:
+  - name: int_sessions
+    description: >
+      One row per session. Aggregates all events within a session
+      into session-level metrics including duration, revenue,
+      levels completed and purchase flag.
+    columns:
+      - name: session_id
+        description: Unique session identifier.
+        tests:
+          - not_null
+          - unique
+
+      - name: user_id
+        description: Player who owned the session.
+        tests:
+          - not_null
+
+      - name: event_date
+        description: Date the session occurred.
+        tests:
+          - not_null
+
+      - name: session_duration_seconds
+        description: Duration from first to last event in the session.
+        tests:
+          - not_null
+
+  - name: int_experiment_assignments
+    description: >
+      One row per user per ab_test_group. Flags users with variant
+      leakage (appearing in both control and treatment).
+    columns:
+      - name: user_id
+        description: Unique player identifier.
+        tests:
+          - not_null
+
+      - name: ab_test_group
+        description: Experiment group.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['control', 'treatment']
+
+      - name: has_leakage
+        description: True if user appears in both control and treatment.
+        tests:
+          - not_null
