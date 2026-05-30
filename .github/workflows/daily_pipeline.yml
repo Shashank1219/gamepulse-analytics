@@ -44,26 +44,39 @@ jobs:
           DATABRICKS_WAREHOUSE_ID: ${{ secrets.DATABRICKS_WAREHOUSE_ID }}
         run: |
           python3 -c "
-          import requests, time, os, sys
+          import requests, time, os, sys, json
 
-          host     = os.getenv('DATABRICKS_HOST')
-          token    = os.getenv('DATABRICKS_TOKEN')
-          wh_id    = os.getenv('DATABRICKS_WAREHOUSE_ID')
-          headers  = {'Authorization': f'Bearer {token}'}
+          host    = os.getenv('DATABRICKS_HOST')
+          token   = os.getenv('DATABRICKS_TOKEN')
+          wh_id   = os.getenv('DATABRICKS_WAREHOUSE_ID')
+          headers = {'Authorization': f'Bearer {token}'}
 
           print(f'Waking warehouse: {wh_id}')
-          requests.post(
+
+          # Start the warehouse
+          start_r = requests.post(
               f'{host}/api/2.0/sql/warehouses/{wh_id}/start',
               headers=headers
           )
+          print(f'Start response: {start_r.status_code} {start_r.text}')
 
+          # Poll until running
           for attempt in range(20):
-              r = requests.get(
+              r    = requests.get(
                   f'{host}/api/2.0/sql/warehouses/{wh_id}',
                   headers=headers
               )
-              state = r.json().get('state', 'UNKNOWN')
+              body = r.json()
+              print(f'Full response: {json.dumps(body)}')
+
+              # Handle both response structures
+              state = (
+                  body.get('state') or
+                  body.get('status', {}).get('state') or
+                  'UNKNOWN'
+              )
               print(f'Attempt {attempt + 1}/20: warehouse state = {state}')
+
               if state == 'RUNNING':
                   print('Warehouse is running. Proceeding.')
                   break
