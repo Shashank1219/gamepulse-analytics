@@ -2,8 +2,8 @@ name: GamePulse Daily Pipeline
 
 on:
   schedule:
-    - cron: '0 15 * * *'    # 17:00 CEST (UTC+2) daily
-  workflow_dispatch:          # allows manual trigger from GitHub UI
+    - cron: '0 15 * * *'
+  workflow_dispatch:
     inputs:
       date:
         description: 'Date to process (YYYY-MM-DD). Leave empty for today.'
@@ -15,6 +15,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
+    # All secrets injected at job level so every step inherits them
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+      DATABRICKS_WAREHOUSE_ID: ${{ secrets.DATABRICKS_WAREHOUSE_ID }}
+      DATABRICKS_HOST_CLEAN: ${{ secrets.DATABRICKS_HOST_CLEAN }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,8 +37,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: |
-          pip install requests boto3 dbt-databricks
+        run: pip install requests boto3 dbt-databricks
 
       - name: Determine target date
         id: date
@@ -37,21 +48,35 @@ jobs:
             echo "target_date=$(date -u +%Y-%m-%d)" >> $GITHUB_OUTPUT
           fi
 
+      - name: Verify Databricks token is available
+        run: |
+          python3 -c "
+          import os
+          token = os.environ.get('DATABRICKS_TOKEN', '')
+          host  = os.environ.get('DATABRICKS_HOST', '')
+          wh_id = os.environ.get('DATABRICKS_WAREHOUSE_ID', '')
+          print(f'Host     : {host}')
+          print(f'Token    : {token[:10]}...' if token else 'Token: NOT FOUND')
+          print(f'WH ID    : {wh_id}')
+          if not token:
+              raise ValueError('DATABRICKS_TOKEN is not set')
+          if not host:
+              raise ValueError('DATABRICKS_HOST is not set')
+          "
+
       - name: Wake Databricks SQL Warehouse
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-          DATABRICKS_WAREHOUSE_ID: ${{ secrets.DATABRICKS_WAREHOUSE_ID }}
         run: |
           python3 -c "
           import requests, time, os, sys, json
 
-          host    = os.getenv('DATABRICKS_HOST')
-          token   = os.getenv('DATABRICKS_TOKEN')
-          wh_id   = os.getenv('DATABRICKS_WAREHOUSE_ID')
+          host    = os.environ['DATABRICKS_HOST']
+          token   = os.environ['DATABRICKS_TOKEN']
+          wh_id   = os.environ['DATABRICKS_WAREHOUSE_ID']
           headers = {'Authorization': f'Bearer {token}'}
 
-          print(f'Waking warehouse: {wh_id}')
+          print(f'Host    : {host}')
+          print(f'WH ID   : {wh_id}')
+          print(f'Token   : {token[:10]}...')
 
           # Start the warehouse
           start_r = requests.post(
@@ -67,19 +92,14 @@ jobs:
                   headers=headers
               )
               body = r.json()
-              print(f'Full response: {json.dumps(body)}')
-
-              # Handle both response structures
-              state = (
-                  body.get('state') or
-                  body.get('status', {}).get('state') or
-                  'UNKNOWN'
-              )
-              print(f'Attempt {attempt + 1}/20: warehouse state = {state}')
-
+              state = body.get('state', 'UNKNOWN')
+              print(f'Attempt {attempt + 1}/20: state = {state}')
               if state == 'RUNNING':
-                  print('Warehouse is running. Proceeding.')
+                  print('Warehouse is running.')
                   break
+              if 'error_code' in body:
+                  print(f'API error: {body}')
+                  sys.exit(1)
               if attempt == 19:
                   print('ERROR: Warehouse did not start in time.')
                   sys.exit(1)
@@ -87,38 +107,31 @@ jobs:
           "
 
       - name: Verify S3 partition exists
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           python3 -c "
           import boto3, os, sys
           s3 = boto3.client('s3',
-              aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-              aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-              region_name=os.getenv('AWS_REGION')
+              aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+              aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+              region_name=os.environ['AWS_REGION']
           )
           date   = '${{ steps.date.outputs.target_date }}'
           prefix = f'events/date={date}/'
-          r      = s3.list_objects_v2(Bucket='${{ secrets.S3_BUCKET_NAME }}', Prefix=prefix)
+          r      = s3.list_objects_v2(Bucket=os.environ['S3_BUCKET_NAME'], Prefix=prefix)
           files  = r.get('Contents', [])
           if not files:
-              print(f'ERROR: No partition found for {date}. Generator may have failed.')
+              print(f'ERROR: No partition found for {date}')
               sys.exit(1)
-          print(f'S3 partition verified for {date}: {len(files)} file(s)')
+          print(f'S3 partition verified: {len(files)} file(s) for {date}')
           "
 
       - name: Trigger Databricks ingestion notebook
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
           python3 -c "
-          import requests, time, os, sys, json
+          import requests, time, os, sys
 
-          host    = os.getenv('DATABRICKS_HOST')
-          token   = os.getenv('DATABRICKS_TOKEN')
+          host    = os.environ['DATABRICKS_HOST']
+          token   = os.environ['DATABRICKS_TOKEN']
           headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
           date    = '${{ steps.date.outputs.target_date }}'
 
@@ -126,10 +139,7 @@ jobs:
               'run_name': f'gamepulse_ingest_{date}',
               'notebook_task': {
                   'notebook_path': '/gamepulse/01_ingest_raw',
-                  'base_parameters': {
-                      'run_date': date,
-                      'mode': 'daily'
-                  }
+                  'base_parameters': {'run_date': date, 'mode': 'daily'}
               },
               'new_cluster': {
                   'spark_version': '13.3.x-scala2.12',
@@ -140,41 +150,33 @@ jobs:
 
           r = requests.post(
               f'{host}/api/2.1/jobs/runs/submit',
-              headers=headers,
-              json=payload
+              headers=headers, json=payload
           )
-
           if r.status_code != 200:
-              print(f'ERROR: Job submission failed: {r.status_code} {r.text}')
+              print(f'ERROR: {r.status_code} {r.text}')
               sys.exit(1)
 
           run_id = r.json()['run_id']
-          print(f'Databricks run submitted. run_id: {run_id}')
+          print(f'Run submitted. run_id: {run_id}')
 
-          # Poll until complete
           while True:
-              status = requests.get(
+              status    = requests.get(
                   f'{host}/api/2.1/jobs/runs/get?run_id={run_id}',
                   headers=headers
               ).json()
-              state      = status['state']
-              lifecycle  = state['life_cycle_state']
+              lifecycle = status['state']['life_cycle_state']
               print(f'Run state: {lifecycle}')
               if lifecycle in ('TERMINATED', 'SKIPPED', 'INTERNAL_ERROR'):
-                  result = state.get('result_state', 'UNKNOWN')
+                  result = status['state'].get('result_state', 'UNKNOWN')
                   if result != 'SUCCESS':
-                      print(f'ERROR: Databricks run failed. result: {result}')
+                      print(f'ERROR: Run failed. result: {result}')
                       sys.exit(1)
-                  print(f'Databricks run completed successfully.')
+                  print('Databricks run completed successfully.')
                   break
               time.sleep(30)
           "
 
       - name: Run dbt models
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
         run: |
           cd dbt/gamepulse
           cat > profiles.yml << PROFILE
@@ -183,9 +185,9 @@ jobs:
             outputs:
               dev:
                 type: databricks
-                host: ${{ secrets.DATABRICKS_HOST_CLEAN }}
-                http_path: ${{ secrets.DATABRICKS_HTTP_PATH }}
-                token: ${{ secrets.DATABRICKS_TOKEN }}
+                host: ${DATABRICKS_HOST_CLEAN}
+                http_path: ${DATABRICKS_HTTP_PATH}
+                token: ${DATABRICKS_TOKEN}
                 catalog: workspace
                 schema: gamepulse_dev
                 threads: 4
@@ -193,9 +195,6 @@ jobs:
           dbt run --profiles-dir .
 
       - name: Run dbt tests
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
           cd dbt/gamepulse
           dbt test --profiles-dir .
@@ -205,7 +204,7 @@ jobs:
         run: |
           echo "================================"
           echo "GamePulse Pipeline Summary"
-          echo "Date processed : ${{ steps.date.outputs.target_date }}"
-          echo "Triggered by   : ${{ github.event_name }}"
-          echo "Run ID         : ${{ github.run_id }}"
+          echo "Date      : ${{ steps.date.outputs.target_date }}"
+          echo "Triggered : ${{ github.event_name }}"
+          echo "Run ID    : ${{ github.run_id }}"
           echo "================================"
