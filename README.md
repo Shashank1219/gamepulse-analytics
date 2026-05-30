@@ -130,15 +130,16 @@ Generated events are written directly to **`s3://gamepulse-raw/events/date=YYYY-
 A single Airflow DAG (`gamepulse_daily`) runs every day at 17:00 CEST and chains the entire batch:
 
 ```
-sense_s3_partition  →  validate_event_volume  →  trigger_databricks
-                                              →  run_dbt_models
-                                              →  run_dbt_tests
+sense_s3_partition  →  validate_event_volume  →  notify_ingestion
+                                              →  notify_dbt_models
+                                              →  notify_dbt_tests
 ```
 
-`validate_event_volume` compares today's partition size to yesterday's and raises a soft alert if the drop exceeds 30%, the kind of canary check that catches broken upstream sources before analysts notice.
+`validate_event_volume` compares today's partition size to yesterday's and raises a soft alert if the drop exceeds 30%, the kind of canary check that catches broken upstream sources before analysts notice. The remaining tasks log operator notifications: the Databricks ingestion notebook runs manually in the Databricks UI, and dbt transformation runs locally via the venv against the warehouse.
 
 Airflow runs locally in Docker (Postgres backend, LocalExecutor). All credentials come from a Git-ignored `.env` file injected at runtime via `${VAR}` interpolation in `docker-compose.yml`.
 
+> **📋 Daily operator routine:** The pipeline has two manual touchpoints by design. Run the Databricks ingestion notebook from the Databricks UI, then run `dbt run && dbt test` locally. Airflow logs both as task notifications so the run history stays complete and auditable.
 ---
 
 ### ⚡ Layer 4 · The Ingestion

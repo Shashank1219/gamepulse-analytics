@@ -142,38 +142,30 @@ def trigger_databricks_notebook(**context):
 
 def run_dbt_models(**context):
     """
-    Runs dbt models in dependency order.
-    Fails the task if any model errors.
+    Logs a reminder for the operator to run dbt models locally.
+    dbt cannot run inside the Airflow container due to Databricks Free Edition
+    SQL Warehouse authentication restrictions on container network paths.
+    In production this would call dbt via the Docker socket or run on a remote runner.
     """
-    import subprocess
-    result = subprocess.run(
-        ["dbt", "run", "--project-dir", DBT_PROJECT_PATH],
-        capture_output=True,
-        text=True,
-    )
-    log.info(result.stdout)
-    if result.returncode != 0:
-        log.error(result.stderr)
-        raise Exception(f"dbt run failed:\n{result.stderr}")
-    log.info("dbt run completed successfully")
+    log.info("=" * 60)
+    log.info("MANUAL STEP REQUIRED: Run dbt models")
+    log.info("=" * 60)
+    log.info("From your terminal, run:")
+    log.info("  cd ~/gamepulse-analytics/dbt/gamepulse")
+    log.info("  dbt run")
+    log.info("=" * 60)
 
 def run_dbt_tests(**context):
     """
-    Runs dbt tests after models are built.
-    Fails the task if any test errors.
-    Logs warnings but does not fail for warn-severity tests.
+    Logs a reminder for the operator to run dbt tests locally.
     """
-    import subprocess
-    result = subprocess.run(
-        ["dbt", "test", "--project-dir", DBT_PROJECT_PATH],
-        capture_output=True,
-        text=True,
-    )
-    log.info(result.stdout)
-    if result.returncode != 0:
-        log.error(result.stderr)
-        raise Exception(f"dbt test failed:\n{result.stderr}")
-    log.info("dbt tests passed")
+    log.info("=" * 60)
+    log.info("MANUAL STEP REQUIRED: Run dbt tests")
+    log.info("=" * 60)
+    log.info("From your terminal, run:")
+    log.info("  cd ~/gamepulse-analytics/dbt/gamepulse")
+    log.info("  dbt test")
+    log.info("=" * 60)
 
 
 # DAG DEFINITION

@@ -12,3 +12,4 @@ airflow/plugins/
 *.egg-info/
 .DS_Store
 graphify-out/
+dbt/gamepulse/profiles.yml
