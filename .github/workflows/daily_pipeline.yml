@@ -20,10 +20,9 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
       S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
-      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
       DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-      DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
       DATABRICKS_HOST_CLEAN: ${{ secrets.DATABRICKS_HOST_CLEAN }}
+      DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
 
     steps:
       - name: Checkout repository
@@ -35,7 +34,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install requests boto3 dbt-databricks databricks-sql-connector
+        run: pip install requests boto3 dbt-databricks
 
       - name: Determine target date
         id: date
@@ -63,77 +62,8 @@ jobs:
               print(f'ERROR: No partition found for {date}')
               sys.exit(1)
           print(f'S3 partition verified: {len(files)} file(s) for {date}')
-          "
-
-      - name: Warm up Databricks warehouse
-        run: |
-          python3 -c "
-          import os
-          from databricks import sql
-
-          # Submitting a lightweight query wakes the serverless warehouse
-          # automatically without needing the management API
-          print('Sending warm-up query to wake serverless warehouse...')
-          with sql.connect(
-              server_hostname=os.environ['DATABRICKS_HOST_CLEAN'],
-              http_path=os.environ['DATABRICKS_HTTP_PATH'],
-              access_token=os.environ['DATABRICKS_TOKEN']
-          ) as conn:
-              with conn.cursor() as cursor:
-                  cursor.execute('SELECT 1')
-                  result = cursor.fetchone()
-                  print(f'Warehouse warm-up successful. Result: {result}')
-          "
-
-      - name: Trigger Databricks ingestion notebook
-        run: |
-          python3 -c "
-          import requests, time, os, sys
-
-          host    = os.environ['DATABRICKS_HOST']
-          token   = os.environ['DATABRICKS_TOKEN']
-          headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-          date    = '${{ steps.date.outputs.target_date }}'
-
-          payload = {
-              'run_name': f'gamepulse_ingest_{date}',
-              'notebook_task': {
-                  'notebook_path': '/gamepulse/01_ingest_raw',
-                  'base_parameters': {'run_date': date, 'mode': 'daily'}
-              },
-              'new_cluster': {
-                  'spark_version': '13.3.x-scala2.12',
-                  'node_type_id':  'Standard_DS3_v2',
-                  'num_workers':   1,
-              }
-          }
-
-          r = requests.post(
-              f'{host}/api/2.1/jobs/runs/submit',
-              headers=headers, json=payload
-          )
-          if r.status_code != 200:
-              print(f'ERROR: {r.status_code} {r.text}')
-              sys.exit(1)
-
-          run_id = r.json()['run_id']
-          print(f'Run submitted. run_id: {run_id}')
-
-          while True:
-              status    = requests.get(
-                  f'{host}/api/2.1/jobs/runs/get?run_id={run_id}',
-                  headers=headers
-              ).json()
-              lifecycle = status['state']['life_cycle_state']
-              print(f'Run state: {lifecycle}')
-              if lifecycle in ('TERMINATED', 'SKIPPED', 'INTERNAL_ERROR'):
-                  result = status['state'].get('result_state', 'UNKNOWN')
-                  if result != 'SUCCESS':
-                      print(f'ERROR: Run failed. result: {result}')
-                      sys.exit(1)
-                  print('Databricks run completed successfully.')
-                  break
-              time.sleep(30)
+          size = sum(o['Size'] for o in files)
+          print(f'Total size: {size / 1024:.2f} KB')
           "
 
       - name: Run dbt models
@@ -163,7 +93,7 @@ jobs:
         if: always()
         run: |
           echo "================================"
-          echo "GamePulse Pipeline Summary"
+          echo "GamePulse Daily Pipeline Summary"
           echo "Date      : ${{ steps.date.outputs.target_date }}"
           echo "Triggered : ${{ github.event_name }}"
           echo "Run ID    : ${{ github.run_id }}"
