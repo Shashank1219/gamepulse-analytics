@@ -130,66 +130,14 @@ def validate_event_volume(**context):
 
 def trigger_databricks_notebook(**context):
     """
-    Submits a one-time Databricks job run for the ingestion notebook.
-    Passes the execution date as a parameter so the notebook can run
-    in incremental mode for that specific date partition.
-    Polls until the run completes or fails.
+    On Databricks Free Edition, the notebook is triggered manually.
+    This task logs a reminder and passes so the DAG continues to dbt.
+    In production with a paid tier, this would call the Databricks Jobs API.
     """
     date_str = context["ds"]
-    headers  = {
-        "Authorization": f"Bearer {DATABRICKS_TOKEN}",
-        "Content-Type":  "application/json",
-    }
-
-    # Submit the notebook job run
-    payload = {
-        "run_name": f"gamepulse_ingest_{date_str}",
-        "existing_cluster_id": None,  # serverless
-        "notebook_task": {
-            "notebook_path": NOTEBOOK_PATH,
-            "base_parameters": {
-                "run_date": date_str,
-                "mode":     "daily",
-            },
-        },
-        "new_cluster": {
-            "spark_version":  "13.3.x-scala2.12",
-            "node_type_id":   "Standard_DS3_v2",
-            "num_workers":    1,
-        },
-    }
-
-    submit_url = f"{DATABRICKS_HOST}/api/2.1/jobs/runs/submit"
-    response   = requests.post(submit_url, headers=headers, json=payload)
-
-    if response.status_code != 200:
-        raise Exception(
-            f"Databricks job submission failed: {response.status_code} {response.text}"
-        )
-
-    run_id = response.json()["run_id"]
-    log.info(f"Databricks run submitted. run_id: {run_id}")
-    context["ti"].xcom_push(key="databricks_run_id", value=run_id)
-
-    # Poll until complete
-    status_url = f"{DATABRICKS_HOST}/api/2.1/jobs/runs/get?run_id={run_id}"
-    import time
-    while True:
-        status_response = requests.get(status_url, headers=headers)
-        state           = status_response.json()["state"]
-        life_cycle      = state["life_cycle_state"]
-        log.info(f"Databricks run state: {life_cycle}")
-
-        if life_cycle in ("TERMINATED", "SKIPPED", "INTERNAL_ERROR"):
-            result = state.get("result_state", "UNKNOWN")
-            if result != "SUCCESS":
-                raise Exception(
-                    f"Databricks run failed. run_id: {run_id} result: {result}"
-                )
-            log.info(f"Databricks run completed successfully. run_id: {run_id}")
-            break
-
-        time.sleep(30)
+    log.info(f"REMINDER: Run the Databricks ingestion notebook manually for date: {date_str}")
+    log.info("Notebook path: /gamepulse/01_ingest_raw")
+    log.info("Assuming notebook has been run. Proceeding to dbt.")
 
 
 def run_dbt_models(**context):
@@ -208,27 +156,6 @@ def run_dbt_models(**context):
         log.error(result.stderr)
         raise Exception(f"dbt run failed:\n{result.stderr}")
     log.info("dbt run completed successfully")
-
-def run_event_generator(**context):
-    """
-    Task 0: Runs the event generator for today's date.
-    Writes one new daily partition to S3 before the pipeline runs.
-    """
-    date_str = context["ds"]
-    result = subprocess.run(
-        [
-            "python3",
-            "/opt/airflow/data_generator/generate_events.py",
-            "--date", date_str,
-        ],
-        capture_output=True,
-        text=True,
-    )
-    log.info(result.stdout)
-    if result.returncode != 0:
-        log.error(result.stderr)
-        raise Exception(f"Event generator failed for {date_str}:\n{result.stderr}")
-    log.info(f"Event generator completed successfully for date: {date_str}")
 
 def run_dbt_tests(**context):
     """
@@ -260,11 +187,6 @@ with DAG(
     tags=["gamepulse", "data-engineering", "batch"],
 ) as dag:
 
-    generate_events = PythonOperator(
-        task_id="run_event_generator",
-        python_callable=run_event_generator,
-    )
-
     sense_partition = PythonSensor(
         task_id="sense_s3_partition",
         python_callable=sense_s3_partition,
@@ -294,4 +216,4 @@ with DAG(
     )
 
     # Task dependency chain
-    generate_events >> sense_partition >> validate_volume >> trigger_databricks >> run_models >> run_tests
+    sense_partition >> validate_volume >> trigger_databricks >> run_models >> run_tests

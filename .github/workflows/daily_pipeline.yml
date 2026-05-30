@@ -11,18 +11,14 @@ on:
         default: ''
 
 jobs:
-  run-pipeline:
+  verify-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
 
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
       S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
-      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-      DATABRICKS_HOST_CLEAN: ${{ secrets.DATABRICKS_HOST_CLEAN }}
-      DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
 
     steps:
       - name: Checkout repository
@@ -34,7 +30,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install requests boto3 dbt-databricks
+        run: pip install boto3
 
       - name: Determine target date
         id: date
@@ -59,41 +55,23 @@ jobs:
           r      = s3.list_objects_v2(Bucket=os.environ['S3_BUCKET_NAME'], Prefix=prefix)
           files  = r.get('Contents', [])
           if not files:
-              print(f'ERROR: No partition found for {date}')
+              print(f'ERROR: No partition found for {date}. Generator may have failed.')
               sys.exit(1)
-          print(f'S3 partition verified: {len(files)} file(s) for {date}')
           size = sum(o['Size'] for o in files)
-          print(f'Total size: {size / 1024:.2f} KB')
+          print(f'S3 partition verified for {date}')
+          print(f'Files : {len(files)}')
+          print(f'Size  : {size / 1024:.2f} KB')
+          print('Next steps run locally via Airflow at 15:00 CEST:')
+          print('  1. Databricks ingestion notebook')
+          print('  2. dbt run')
+          print('  3. dbt test')
           "
-
-      - name: Run dbt models
-        run: |
-          cd dbt/gamepulse
-          cat > profiles.yml << PROFILE
-          gamepulse:
-            target: dev
-            outputs:
-              dev:
-                type: databricks
-                host: ${DATABRICKS_HOST_CLEAN}
-                http_path: ${DATABRICKS_HTTP_PATH}
-                token: ${DATABRICKS_TOKEN}
-                catalog: workspace
-                schema: gamepulse_dev
-                threads: 4
-          PROFILE
-          dbt run --profiles-dir .
-
-      - name: Run dbt tests
-        run: |
-          cd dbt/gamepulse
-          dbt test --profiles-dir .
 
       - name: Pipeline summary
         if: always()
         run: |
           echo "================================"
-          echo "GamePulse Daily Pipeline Summary"
+          echo "GamePulse Pipeline Summary"
           echo "Date      : ${{ steps.date.outputs.target_date }}"
           echo "Triggered : ${{ github.event_name }}"
           echo "Run ID    : ${{ github.run_id }}"
