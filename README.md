@@ -135,7 +135,7 @@ sense_s3_partition  →  validate_event_volume  →  notify_ingestion
                                               →  notify_dbt_tests
 ```
 
-`validate_event_volume` compares today's partition size to yesterday's and raises a soft alert if the drop exceeds 30%, the kind of canary check that catches broken upstream sources before analysts notice. The remaining tasks log operator notifications: the Databricks ingestion notebook runs manually in the Databricks UI, and dbt transformation runs locally via the venv against the warehouse.
+`validate_event_volume` compares today's partition size to yesterday's and raises a soft alert if the drop exceeds 30%. The Databricks ingestion notebook and dbt transformation run as manual operator steps. The DAG logs reminders for both and marks tasks as successful to keep the run history clean. In production on MWAA or Astronomer, both steps would execute automatically via the Jobs API and dbt-databricks respectively.
 
 Airflow runs locally in Docker (Postgres backend, LocalExecutor). All credentials come from a Git-ignored `.env` file injected at runtime via `${VAR}` interpolation in `docker-compose.yml`.
 

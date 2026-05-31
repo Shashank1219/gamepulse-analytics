@@ -14,29 +14,21 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from datetime import datetime, timedelta
 
 import boto3
-import requests
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.sensors.python import PythonSensor
 
 log = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────
-# CONFIG
-# ─────────────────────────────────────────────
+
+# CONFIGURATION
 
 S3_BUCKET         = os.getenv("S3_BUCKET_NAME", "gamepulse-raw")
 S3_PREFIX         = "events"
-DATABRICKS_HOST   = os.getenv("DATABRICKS_HOST")
-DATABRICKS_TOKEN  = os.getenv("DATABRICKS_TOKEN")
-NOTEBOOK_PATH     = "/gamepulse/01_ingest_raw"
-DBT_PROJECT_PATH  = "/opt/airflow/dbt/gamepulse"
 VOLUME_DROP_ALERT = 0.30   # alert if event count drops more than 30%
-ALERT_EMAIL       = os.getenv("AIRFLOW_ALERT_EMAIL", "shashank.prakash1997@outlook.com")
 
 DEFAULT_ARGS = {
     "owner":            "shashank",
@@ -47,10 +39,8 @@ DEFAULT_ARGS = {
     "retry_delay":      timedelta(minutes=5),
 }
 
-# ─────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────
 
+# HELPER FUNCTIONS
 def get_s3_client():
     return boto3.client(
         "s3",
@@ -139,34 +129,31 @@ def trigger_databricks_notebook(**context):
     log.info("Notebook path: /gamepulse/01_ingest_raw")
     log.info("Assuming notebook has been run. Proceeding to dbt.")
 
-
-def run_dbt_models(**context):
+def notify_dbt_run(**context):
     """
-    Logs a reminder for the operator to run dbt models locally.
-    dbt cannot run inside the Airflow container due to Databricks Free Edition
-    SQL Warehouse authentication restrictions on container network paths.
-    In production this would call dbt via the Docker socket or run on a remote runner.
+    dbt runs manually on the host machine due to Databricks Free Edition
+    restricting SQL Warehouse Thrift connections from container networks.
+    In production this runs on MWAA or Astronomer where this restriction
+    does not apply.
     """
+    date_str = context["ds"]
     log.info("=" * 60)
-    log.info("MANUAL STEP REQUIRED: Run dbt models")
+    log.info("MANUAL STEP: Run dbt transformation")
     log.info("=" * 60)
-    log.info("From your terminal, run:")
+    log.info(f"Date: {date_str}")
+    log.info("Command:")
     log.info("  cd ~/gamepulse-analytics/dbt/gamepulse")
-    log.info("  dbt run")
+    log.info("  dbt run && dbt test")
     log.info("=" * 60)
 
-def run_dbt_tests(**context):
-    """
-    Logs a reminder for the operator to run dbt tests locally.
-    """
-    log.info("=" * 60)
-    log.info("MANUAL STEP REQUIRED: Run dbt tests")
-    log.info("=" * 60)
-    log.info("From your terminal, run:")
-    log.info("  cd ~/gamepulse-analytics/dbt/gamepulse")
-    log.info("  dbt test")
-    log.info("=" * 60)
 
+def notify_dbt_test(**context):
+    """
+    Placeholder task to maintain the five-task DAG structure.
+    dbt test runs as part of the manual dbt run step above.
+    """
+    log.info("dbt test runs as part of the manual dbt run step.")
+    log.info("Check dbt output on the host terminal for test results.")
 
 # DAG DEFINITION
 with DAG(
@@ -199,12 +186,12 @@ with DAG(
 
     run_models = PythonOperator(
         task_id="run_dbt_models",
-        python_callable=run_dbt_models,
+        python_callable=notify_dbt_run,
     )
 
     run_tests = PythonOperator(
         task_id="run_dbt_tests",
-        python_callable=run_dbt_tests,
+        python_callable=notify_dbt_test,
     )
 
     # Task dependency chain
