@@ -31,6 +31,32 @@ print(f"Target Delta table: {DELTA_TABLE}")
 
 # COMMAND ----------
 
+from datetime import date
+
+run_date     = date.today().strftime("%Y-%m-%d")
+mode         = "daily"
+S3_READ_PATH = f"s3://{S3_BUCKET}/{S3_PREFIX}/date={run_date}/"
+
+print(f"Mode      : DAILY INCREMENTAL")
+print(f"Run date  : {run_date}")
+print(f"Read path : {S3_READ_PATH}")
+
+# COMMAND ----------
+
+# Uncomment this cell and comment out Cell 3 to run a full backfill.
+# Use this when reprocessing the entire dataset from scratch.
+
+# from datetime import date
+
+# run_date     = ""
+# mode         = "backfill"
+# S3_READ_PATH = f"s3://{S3_BUCKET}/{S3_PREFIX}/"
+
+# print(f"Mode      : FULL BACKFILL")
+# print(f"Read path : {S3_READ_PATH}")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC <h5>Schema Definition</h5>
 
@@ -50,7 +76,7 @@ from pyspark.sql import functions as F
 raw_df = (
     spark.read
     .option("mergeSchema", "true")
-    .parquet(S3_PATH)
+    .parquet(S3_READ_PATH)
 )
  
 print(f"Raw records read from S3 : {raw_df.count():,}")
@@ -65,7 +91,7 @@ print(f"Columns inferred         : {len(raw_df.columns)}")
 
 integer_cols = [
     "session_number", "days_since_install", "days_since_last_session",
-    "player_level", "in_game_currency_balance",                 
+    "player_level", "in_game_currency_balance",
     "level_number", "attempt_number", "time_to_complete_seconds",
     "score", "stars_earned", "coins_earned", "xp_earned",
     "player_level_before", "player_level_after",
@@ -188,17 +214,59 @@ final_df.printSchema()
 
 # COMMAND ----------
 
-(
-    final_df.write
-    .format("delta")
-    .mode("overwrite")
-    .partitionBy("event_date", "event_type")
-    .option("overwriteSchema", "true")
-    .saveAsTable(DELTA_TABLE)
-)
- 
-print(f"Successfully written to Delta table: {DELTA_TABLE}")
-print(f"Partitioned by: event_date, event_type")
+from delta.tables import DeltaTable
+
+if mode == "daily" and run_date:
+    print(f"Mode     : DAILY INCREMENTAL")
+    print(f"Date     : {run_date}")
+
+    if spark.catalog.tableExists(DELTA_TABLE):
+        delta_table   = DeltaTable.forName(spark, DELTA_TABLE)
+        count_before  = spark.table(DELTA_TABLE).count()
+
+        (
+            delta_table.alias("target")
+            .merge(
+                final_df.alias("source"),
+                "target.event_id = source.event_id"
+            )
+            .whenNotMatchedInsertAll()
+            .execute()
+        )
+
+        count_after = spark.table(DELTA_TABLE).count()
+
+        print(f"MERGE complete.")
+        print(f"Rows before : {count_before:,}")
+        print(f"Rows after  : {count_after:,}")
+        print(f"Rows added  : {count_after - count_before:,}")
+
+    else:
+        print("Table does not exist. Creating with this partition.")
+        (
+            final_df.write
+            .format("delta")
+            .mode("overwrite")
+            .partitionBy("event_date", "event_type")
+            .saveAsTable(DELTA_TABLE)
+        )
+
+else:
+    print("Mode     : FULL BACKFILL")
+    print("Strategy : OVERWRITE entire table")
+    print()
+
+    (
+        final_df.write
+        .format("delta")
+        .mode("overwrite")
+        .partitionBy("event_date", "event_type")
+        .option("overwriteSchema", "true")
+        .saveAsTable(DELTA_TABLE)
+    )
+
+    count_after = spark.table(DELTA_TABLE).count()
+    print(f"Backfill complete. Rows: {count_after:,}")
 
 # COMMAND ----------
 
@@ -228,3 +296,5 @@ display(
         "count(distinct event_date) as total_days"
     )
 )
+
+print(spark.table("raw.game_events").count())
